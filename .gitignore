@@ -1,5 +1,6 @@
 # Release artifacts: publish these separately, never commit them.
 bin/
+config.mk
 *.tar.gz
 *.log
 *.tmp

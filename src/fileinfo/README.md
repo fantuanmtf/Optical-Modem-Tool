@@ -1,6 +1,20 @@
 # fileinfo
 
-显示文件/目录/链接的类型、权限、大小、owner/group 和修改时间，纯 POSIX `sh`。
+显示文件/目录/链接的类型、权限、大小、owner/group 和修改时间。C 实现，源码：
+
+- `main.c`：参数处理和帮助
+- `inspect.c`：`lstat(2)`、模式字符串、owner/group、symlink 目标、时间格式化
+- `fileinfo.h`
+
+## 构建
+
+```bash
+./configure --host=native --tools=fileinfo
+make fileinfo
+./bin/host/fileinfo README.md
+```
+
+交叉构建使用默认 `configure --host=arm-linux-musleabi`，产物为 `bin/fileinfo`。
 
 ## 用法
 
@@ -22,6 +36,7 @@ Group:    root
 Modified: 2026-11-20 03:31:00
 ```
 
-- 符号链接会显示 `symlink -> target`。
-- 普通文件用 `wc -c` 取字节数；目录显示目录项大小。
-- 修改时间优先用 `stat -c '%y'`，BusyBox 不支持时回退到 `ls -ld` 的日期字段。
+- 符号链接使用 `lstat`，输出 `symbolic link -> target`，大小为链接本身。
+- 普通文件直接使用 `st_size`；目录标注 `directory entry`；设备标注 `device`。
+- `Modified` 只包含时间，不包含文件名。
+- 多个路径依次输出，中间空一行；无法读取的路径写 stderr，其他路径继续处理。

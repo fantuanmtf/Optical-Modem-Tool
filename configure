@@ -1,0 +1,349 @@
+#!/bin/sh
+# Hand-written POSIX configure for Optical-Modem-Tool.
+#
+# No autotools, no interactive prompts.  The result is a small config.mk
+# which the Makefile includes.  Default target is the ARMv7 softfloat
+# cross build used by the modem.
+set -u
+
+VERSION=1.2.0
+ALL_TOOLS="fileinfo zxnetmon router-check zxtools"
+
+HOST=arm-linux-musleabi
+PREFIX=/usr/data/zxtools
+BINDIR=/usr/bin
+TOOLS_SPEC=all
+TOOLCHAIN=
+
+usage() {
+    cat <<EOF
+Usage: ./configure [options]
+
+Options:
+  --host=TARGET        Target triple, or "native" for host tests
+                       (default: arm-linux-musleabi)
+  --prefix=DIR         Installation prefix (default: /usr/data/zxtools)
+  --bindir=DIR         Directory for command links (default: /usr/bin)
+  --tools=LIST         Space/comma separated tools, or "all"
+                       (default: all)
+  --with-toolchain=DIR Prepend DIR to PATH when looking for the compiler
+  -h, --help           Show this help
+
+Tools:
+  $ALL_TOOLS
+
+Environment:
+  CC, CFLAGS, CPPFLAGS, LDFLAGS, HOSTCC are honoured.
+  For the default target, the cross compiler is searched in PATH and then in
+  \$HOME/.local/opt/arm-linux-musleabi-cross/bin.
+
+Output:
+  config.mk is generated in the source root; it is gitignored.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --host=*) HOST=${1#*=} ;;
+        --host)
+            shift
+            [ $# -gt 0 ] || { echo "configure: --host needs a value" >&2; exit 2; }
+            HOST=$1
+            ;;
+        --prefix=*) PREFIX=${1#*=} ;;
+        --prefix)
+            shift
+            [ $# -gt 0 ] || { echo "configure: --prefix needs a value" >&2; exit 2; }
+            PREFIX=$1
+            ;;
+        --bindir=*) BINDIR=${1#*=} ;;
+        --bindir)
+            shift
+            [ $# -gt 0 ] || { echo "configure: --bindir needs a value" >&2; exit 2; }
+            BINDIR=$1
+            ;;
+        --tools=*) TOOLS_SPEC=${1#*=} ;;
+        --tools)
+            shift
+            [ $# -gt 0 ] || { echo "configure: --tools needs a value" >&2; exit 2; }
+            TOOLS_SPEC=$1
+            ;;
+        --with-toolchain=*) TOOLCHAIN=${1#*=} ;;
+        --with-toolchain)
+            shift
+            [ $# -gt 0 ] || { echo "configure: --with-toolchain needs a directory" >&2; exit 2; }
+            TOOLCHAIN=$1
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *)
+            echo "configure: unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+[ -n "$HOST" ] || { echo "configure: --host must not be empty" >&2; exit 2; }
+[ -n "$PREFIX" ] || { echo "configure: --prefix must not be empty" >&2; exit 2; }
+[ -n "$BINDIR" ] || { echo "configure: --bindir must not be empty" >&2; exit 2; }
+[ -n "$TOOLS_SPEC" ] || { echo "configure: --tools must not be empty" >&2; exit 2; }
+
+for required in make mkdir rm cat tar; do
+    command -v "$required" >/dev/null 2>&1 || {
+        echo "configure: required tool not found: $required" >&2
+        exit 1
+    }
+done
+
+case "$HOST" in
+    native) HOST_KIND=native ;;
+    *) HOST_KIND=cross ;;
+esac
+
+if [ -n "$TOOLCHAIN" ]; then
+    [ -d "$TOOLCHAIN" ] || {
+        echo "configure: toolchain directory not found: $TOOLCHAIN" >&2
+        exit 1
+    }
+    PATH=$TOOLCHAIN:$PATH
+    export PATH
+fi
+
+# Default cross toolchain location for this project, in addition to PATH.
+if [ "$HOST_KIND" = cross ] && [ -z "${CC:-}" ]; then
+    if ! command -v "$HOST-gcc" >/dev/null 2>&1; then
+        default_tc=$HOME/.local/opt/$HOST-cross/bin
+        if [ -x "$default_tc/$HOST-gcc" ]; then
+            PATH=$default_tc:$PATH
+            export PATH
+        fi
+    fi
+fi
+
+if [ "$HOST_KIND" = native ]; then
+    CC=${CC:-cc}
+    HOSTCC=$CC
+else
+    CC=${CC:-$HOST-gcc}
+    HOSTCC=${HOSTCC:-cc}
+fi
+
+command -v "$CC" >/dev/null 2>&1 || {
+    echo "configure: C compiler not found: $CC" >&2
+    echo "configure: pass --with-toolchain=DIR or set CC" >&2
+    exit 1
+}
+command -v "$HOSTCC" >/dev/null 2>&1 || {
+    echo "configure: host test compiler not found: $HOSTCC" >&2
+    exit 1
+}
+
+# Record absolute paths so make works without configure's PATH adjustments.
+CC=$(command -v "$CC")
+HOSTCC=$(command -v "$HOSTCC")
+
+BASE_CFLAGS="-Os -std=c99 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE"
+HOST_BASE_CFLAGS="-O2 -g -std=c99 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE"
+
+TARGET_CFLAGS=
+TARGET_LDFLAGS=
+if [ "$HOST_KIND" = cross ]; then
+    TARGET_CFLAGS="-march=armv7-a -mfloat-abi=soft -fno-pie"
+    TARGET_LDFLAGS="-static -no-pie"
+fi
+
+CFLAGS_FINAL="$BASE_CFLAGS ${CFLAGS:-} $TARGET_CFLAGS"
+CPPFLAGS_FINAL="${CPPFLAGS:-}"
+LDFLAGS_FINAL="${LDFLAGS:-} $TARGET_LDFLAGS"
+HOST_CFLAGS_FINAL="$HOST_BASE_CFLAGS ${HOST_CFLAGS:-}"
+
+TMPROOT=${TMPDIR:-/tmp}/zxconfigure.$$
+mkdir -p "$TMPROOT" || exit 1
+trap 'rm -rf "$TMPROOT"' EXIT INT TERM
+
+printf '%s\n' 'int main(void) { return 0; }' > "$TMPROOT/hello.c"
+if ! $CC $CPPFLAGS_FINAL $CFLAGS_FINAL $LDFLAGS_FINAL \
+        "$TMPROOT/hello.c" -o "$TMPROOT/hello" >/dev/null 2>&1; then
+    echo "configure: cannot link a test program with $CC" >&2
+    echo "configure: CFLAGS=$CFLAGS_FINAL" >&2
+    echo "configure: LDFLAGS=$LDFLAGS_FINAL" >&2
+    exit 1
+fi
+if ! $HOSTCC $HOST_CFLAGS_FINAL "$TMPROOT/hello.c" \
+        -o "$TMPROOT/hello-host" >/dev/null 2>&1; then
+    echo "configure: cannot link host test program with $HOSTCC" >&2
+    exit 1
+fi
+
+probe() {
+    # probe COMPILER CFLAGS LDFLAGS CODE
+    printf '%s\n' "$4" > "$TMPROOT/probe.c"
+    if $1 $2 $3 -Werror=implicit-function-declaration \
+            "$TMPROOT/probe.c" -o "$TMPROOT/probe" >/dev/null 2>&1; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+headers_code='#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <dirent.h>
+#include <pwd.h>
+#include <grp.h>
+#include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
+int main(void) { return 0; }'
+
+getifaddrs_code='#include <ifaddrs.h>
+int main(void) {
+    struct ifaddrs *list = 0;
+    if (getifaddrs(&list) != 0) return 1;
+    freeifaddrs(list);
+    return 0;
+}'
+
+statvfs_code='#include <sys/statvfs.h>
+int main(void) { struct statvfs vfs; return statvfs("/", &vfs); }'
+
+strlcpy_code='#include <string.h>
+int main(void) { char b[8]; return (int)strlcpy(b, "x", sizeof(b)); }'
+
+strlcat_code='#include <string.h>
+int main(void) { char b[8] = "x"; return (int)strlcat(b, "y", sizeof(b)); }'
+
+strcasestr_code='#include <string.h>
+int main(void) { return strcasestr("abc", "b") == 0; }'
+
+strchrnul_code='#include <string.h>
+int main(void) { return *strchrnul("abc", 98) != 98; }'
+
+for pair in target host; do
+    if [ "$pair" = target ]; then
+        pcc=$CC
+        pcflags="$CPPFLAGS_FINAL $CFLAGS_FINAL"
+        pldflags=$LDFLAGS_FINAL
+        prefix=
+    else
+        pcc=$HOSTCC
+        pcflags="$HOST_CFLAGS_FINAL"
+        pldflags=
+        prefix=HOST_
+    fi
+
+    if [ "$(probe "$pcc" "$pcflags" "$pldflags" "$headers_code")" != 1 ]; then
+        echo "configure: required C headers are missing for $pcc" >&2
+        exit 1
+    fi
+    eval "${prefix}HAVE_GETIFADDRS=$(probe "$pcc" "$pcflags" "$pldflags" "$getifaddrs_code")"
+    eval "${prefix}HAVE_STATVFS=$(probe "$pcc" "$pcflags" "$pldflags" "$statvfs_code")"
+    eval "${prefix}HAVE_STRLCPY=$(probe "$pcc" "$pcflags" "$pldflags" "$strlcpy_code")"
+    eval "${prefix}HAVE_STRLCAT=$(probe "$pcc" "$pcflags" "$pldflags" "$strlcat_code")"
+    eval "${prefix}HAVE_STRCASESTR=$(probe "$pcc" "$pcflags" "$pldflags" "$strcasestr_code")"
+    eval "${prefix}HAVE_STRCHRNUL=$(probe "$pcc" "$pcflags" "$pldflags" "$strchrnul_code")"
+done
+
+make_defs() {
+    defs=
+    [ "$1" = 1 ] && defs="$defs -DHAVE_GETIFADDRS=1"
+    [ "$2" = 1 ] && defs="$defs -DHAVE_STATVFS=1"
+    [ "$3" = 1 ] && defs="$defs -DHAVE_STRLCPY=1"
+    [ "$4" = 1 ] && defs="$defs -DHAVE_STRLCAT=1"
+    [ "$5" = 1 ] && defs="$defs -DHAVE_STRCASESTR=1"
+    [ "$6" = 1 ] && defs="$defs -DHAVE_STRCHRNUL=1"
+    printf '%s' "${defs# }"
+}
+DEFS=$(make_defs "$HAVE_GETIFADDRS" "$HAVE_STATVFS" "$HAVE_STRLCPY" \
+                "$HAVE_STRLCAT" "$HAVE_STRCASESTR" "$HAVE_STRCHRNUL")
+HOST_DEFS=$(make_defs "$HOST_HAVE_GETIFADDRS" "$HOST_HAVE_STATVFS" \
+                     "$HOST_HAVE_STRLCPY" "$HOST_HAVE_STRLCAT" \
+                     "$HOST_HAVE_STRCASESTR" "$HOST_HAVE_STRCHRNUL")
+
+SELECTED=
+if [ "$TOOLS_SPEC" = all ]; then
+    SELECTED=$ALL_TOOLS
+else
+    old_ifs=$IFS
+    IFS=' ,:'
+    for tool in $TOOLS_SPEC; do
+        case " $ALL_TOOLS " in
+            *" $tool "*) ;;
+            *)
+                IFS=$old_ifs
+                echo "configure: unknown tool: $tool" >&2
+                echo "configure: valid tools: $ALL_TOOLS" >&2
+                exit 1
+                ;;
+        esac
+        case " $SELECTED " in
+            *" $tool "*) continue ;;
+        esac
+        SELECTED="$SELECTED $tool"
+    done
+    IFS=$old_ifs
+    SELECTED=${SELECTED# }
+fi
+
+[ -n "$SELECTED" ] || {
+    echo "configure: no tools selected" >&2
+    exit 1
+}
+
+for tool in $SELECTED; do
+    if [ ! -f "src/$tool/main.c" ]; then
+        echo "configure: missing source for selected tool: src/$tool/main.c" >&2
+        exit 1
+    fi
+done
+
+if [ "$HOST_KIND" = native ]; then
+    BUILD_DIR=bin/host
+    OBJDIR=bin/obj/native
+else
+    BUILD_DIR=bin
+    OBJDIR="bin/obj/$HOST"
+fi
+
+{
+    echo "# Generated by ./configure; do not edit, do not commit."
+    echo "VERSION := $VERSION"
+    echo "HOST := $HOST"
+    echo "HOST_KIND := $HOST_KIND"
+    echo "CC := $CC"
+    echo "CPPFLAGS := $CPPFLAGS_FINAL"
+    echo "CFLAGS := $CFLAGS_FINAL"
+    echo "LDFLAGS := $LDFLAGS_FINAL"
+    echo "LDLIBS :="
+    echo "DEFS := $DEFS"
+    echo "HOSTCC := $HOSTCC"
+    echo "HOST_CFLAGS := $HOST_CFLAGS_FINAL"
+    echo "HOST_LDFLAGS :="
+    echo "HOST_DEFS := $HOST_DEFS"
+    echo "PREFIX := $PREFIX"
+    echo "BINDIR := $BINDIR"
+    echo "TOOLS := $SELECTED"
+    echo "BUILD_DIR := $BUILD_DIR"
+    echo "OBJDIR := $OBJDIR"
+} > config.mk || {
+    echo "configure: cannot write config.mk" >&2
+    exit 1
+}
+
+echo "configure: target      $HOST ($HOST_KIND)"
+echo "configure: compiler    $CC"
+echo "configure: cflags      $CFLAGS_FINAL"
+echo "configure: ldflags     $LDFLAGS_FINAL"
+echo "configure: tools       $SELECTED"
+echo "configure: output      $BUILD_DIR"
+echo "configure: features    getifaddrs=$HAVE_GETIFADDRS statvfs=$HAVE_STATVFS strlcpy=$HAVE_STRLCPY strlcat=$HAVE_STRLCAT"
+echo "configure: host tests  $HOSTCC -> bin/host"
+echo "configure: wrote       config.mk"
+exit 0
