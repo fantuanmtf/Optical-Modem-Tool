@@ -5,6 +5,7 @@
 
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -132,5 +133,99 @@ int monitor_run(const char *iface, unsigned interval)
     show_cursor();
     putchar('\n');
     fflush(stdout);
+    return 0;
+}
+
+int monitor_run_many(char *const *ifaces, size_t count, unsigned interval,
+                     const char *mode)
+{
+    zxmon_state *states;
+    struct sigaction action;
+    unsigned long long rx;
+    unsigned long long tx;
+    size_t i;
+
+    if (count == 0) {
+        fprintf(stderr, "zxnetmon: no interfaces to monitor\n");
+        return 1;
+    }
+
+    states = calloc(count, sizeof(*states));
+    if (states == NULL) {
+        fprintf(stderr, "zxnetmon: out of memory\n");
+        return 1;
+    }
+
+    for (i = 0; i < count; i++) {
+        int j;
+
+        if (netdev_read(ifaces[i], &rx, &tx) != 0) {
+            fprintf(stderr, "zxnetmon: cannot read counters for '%s'\n",
+                    ifaces[i]);
+            free(states);
+            return 1;
+        }
+        for (j = 0; j < ZXMON_HISTORY; j++) {
+            states[i].hist_rx[j] = 0;
+            states[i].hist_tx[j] = 0;
+        }
+        states[i].iface = ifaces[i];
+        states[i].interval = interval;
+        states[i].prev_rx = rx;
+        states[i].prev_tx = tx;
+        states[i].cur_rx = rx;
+        states[i].cur_tx = tx;
+        states[i].rate_rx = 0;
+        states[i].rate_tx = 0;
+        states[i].max_rate = 1;
+    }
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = on_signal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+
+    hide_cursor();
+    render_multi_frame(states, count, mode);
+
+    while (!stop_requested) {
+        sleep(interval);
+        if (stop_requested)
+            break;
+
+        for (i = 0; i < count; i++) {
+            unsigned long long drx;
+            unsigned long long dtx;
+
+            if (netdev_read(ifaces[i], &rx, &tx) != 0) {
+                show_cursor();
+                fprintf(stderr,
+                        "\nzxnetmon: interface '%s' disappeared\n",
+                        ifaces[i]);
+                free(states);
+                return 1;
+            }
+
+            drx = rx >= states[i].prev_rx ? rx - states[i].prev_rx : 0;
+            dtx = tx >= states[i].prev_tx ? tx - states[i].prev_tx : 0;
+            states[i].rate_rx = drx / interval;
+            states[i].rate_tx = dtx / interval;
+            states[i].cur_rx = rx;
+            states[i].cur_tx = tx;
+            push_history(&states[i], states[i].rate_rx,
+                         states[i].rate_tx);
+            states[i].max_rate = update_max(&states[i]);
+            states[i].prev_rx = rx;
+            states[i].prev_tx = tx;
+        }
+        render_multi_frame(states, count, mode);
+    }
+
+    show_cursor();
+    putchar('\n');
+    fflush(stdout);
+    free(states);
     return 0;
 }

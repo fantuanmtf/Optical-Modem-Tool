@@ -22,7 +22,7 @@
 | `zxtools` | 统一菜单入口，也可直接调用子工具 |
 | `router-check` | 系统、CPU、内存、存储、网卡、路由、端口、进程、无线信息自检 |
 | `fileinfo` | 文件类型、权限、大小、owner/group、mtime、symlink 目标 |
-| `zxnetmon` | `ZX NETMONITOR` 实时 RX/TX 速率、累计流量和 30 点 ASCII 图 |
+| `zxnetmon` | `ZX NETMONITOR` 实时 RX/TX 速率、累计流量和 30 点 ASCII 图；默认自动检测多个虚拟接口 |
 
 每个项目的源码和说明在 `src/<项目>/`。共享代码在 `src/common/` 和 `src/include/`。
 
@@ -170,10 +170,13 @@ router-check
 router-check --save     # 保存到 $ZXTOOLS_HOME/reports/ 或 /usr/data/zxtools/reports/
 router-check -o /tmp/report.txt
 fileinfo /usr/data/hello
-zxnetmon -i br0 -n 1
+zxnetmon               # 自动检测虚拟接口，每个接口一个面板
+zxnetmon -i br0 -n 1   # 只监控指定接口
+zxnetmon -i all        # 所有非 lo 接口
 ```
 
 - `zxtools` 菜单需要 TTY；通过 `ssh -T` 运行时请用 `zxtools router-check` 这种直调方式。非 TTY 会自动打印用法。
+- `zxnetmon` 不写 `-i` 时自动检测 `br*`、`vlan*`、`ppp*`、`wlan*`、`tun*`、`tap*`、`bond*`、`docker*`、`virbr*`、`vmnet*` 或没有 sysfs device 的接口；没有虚拟接口时回退到所有非 `lo` 接口。显式 `-i IFACE` 仍保持单接口模式。
 - `zxnetmon` 需要终端显示 ANSI 图；建议用 Telnet，`Ctrl+C` 退出并恢复光标。
 - `router-check` 和 `fileinfo` 可以在 `ssh -T` 下直接运行。
 - 所有工具只读：不抓包、不改网络配置、不写系统文件（`--save`/`-o` 除外）。

@@ -13,7 +13,7 @@
 #include <time.h>
 
 #ifndef ZX_VERSION
-#define ZX_VERSION "1.2.0"
+#define ZX_VERSION "1.3.0"
 #endif
 
 #define ZX_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))

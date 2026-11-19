@@ -15,12 +15,22 @@ static void usage(FILE *fp)
             "zxnetmon %s - realtime network traffic monitor\n"
             "\n"
             "Usage:\n"
-            "  zxnetmon [-i IFACE] [-n SECONDS]\n"
+            "  zxnetmon [-n SECONDS]\n"
+            "  zxnetmon -i IFACE [-n SECONDS]\n"
             "\n"
             "Options:\n"
-            "  -i, --interface IFACE  interface to monitor (default: br0)\n"
+            "  -i, --interface IFACE  monitor one interface; omit to "
+            "auto-detect\n"
+            "                         virtual interfaces (use \"all\" for "
+            "all non-loopback)\n"
             "  -n, --interval SECONDS sample interval (default: 1)\n"
             "  -h, --help             show this help\n"
+            "\n"
+            "Without -i, interfaces matching br*, vlan*, ppp*, wlan*, tun*,\n"
+            "tap*, bond*, docker*, virbr*, vmnet*, or without a sysfs "
+            "device\n"
+            "entry are shown.  If none match, all non-loopback interfaces "
+            "are used.\n"
             "\n"
             "Reads counters from /proc/net/dev. Press Ctrl+C to exit.\n"
             "On this modem's SSH server, use Telnet for a full interactive "
@@ -30,7 +40,7 @@ static void usage(FILE *fp)
 
 int main(int argc, char **argv)
 {
-    const char *iface = "br0";
+    const char *iface = NULL;
     unsigned interval = 1;
     unsigned long value;
     unsigned long long rx;
@@ -84,17 +94,44 @@ int main(int argc, char **argv)
         interval = (unsigned)value;
     }
 
-    errno = 0;
-    if (netdev_read(iface, &rx, &tx) != 0) {
-        if (errno == ENOENT) {
-            fprintf(stderr, "zxnetmon: interface '%s' not found.\n", iface);
-            fprintf(stderr, "Available interfaces:\n");
-            netdev_list(stderr);
-        } else {
-            fprintf(stderr, "zxnetmon: cannot read /proc/net/dev\n");
+    if (iface != NULL && strcmp(iface, "all") != 0) {
+        errno = 0;
+        if (netdev_read(iface, &rx, &tx) != 0) {
+            if (errno == ENOENT) {
+                fprintf(stderr, "zxnetmon: interface '%s' not found.\n",
+                        iface);
+                fprintf(stderr, "Available interfaces:\n");
+                netdev_list(stderr);
+            } else {
+                fprintf(stderr, "zxnetmon: cannot read /proc/net/dev\n");
+            }
+            return 1;
         }
-        return 1;
+        return monitor_run(iface, interval);
     }
 
-    return monitor_run(iface, interval);
+    {
+        zxmon_iflist list = { NULL, 0, 0 };
+        const char *mode;
+        int all = iface != NULL;
+        int rc;
+
+        rc = all ? netdev_all_nonloopback(&list) :
+                   netdev_detect_virtual(&list);
+        if (rc != 0) {
+            fprintf(stderr, "zxnetmon: cannot enumerate /proc/net/dev\n");
+            netdev_iflist_free(&list);
+            return 1;
+        }
+        if (list.count == 0) {
+            fprintf(stderr, "zxnetmon: no non-loopback interfaces found.\n");
+            netdev_iflist_free(&list);
+            return 1;
+        }
+
+        mode = all ? "all non-loopback" : "auto-detected";
+        rc = monitor_run_many(list.names, list.count, interval, mode);
+        netdev_iflist_free(&list);
+        return rc;
+    }
 }

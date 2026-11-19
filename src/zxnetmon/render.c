@@ -87,3 +87,45 @@ void render_frame(const zxmon_state *state)
     printf("Press Ctrl+C to exit\n");
     fflush(stdout);
 }
+
+void render_multi_frame(const zxmon_state *states, size_t count,
+                        const char *mode)
+{
+    size_t i;
+
+    ui_clear_screen();
+    printf("========================================\n");
+    printf("          ZX NETMONITOR v%s\n", ZX_VERSION);
+    printf("========================================\n");
+    printf("Interfaces: %zu", count);
+    if (mode != NULL && *mode != '\0')
+        printf(" (%s)", mode);
+    printf("\n");
+
+    for (i = 0; i < count; i++) {
+        const zxmon_state *state = &states[i];
+        char down[32];
+        char up[32];
+        char total_rx[32];
+        char total_tx[32];
+
+        zx_human_rate(state->rate_rx, down, sizeof(down));
+        zx_human_rate(state->rate_tx, up, sizeof(up));
+        zx_human_bytes(state->cur_rx, total_rx, sizeof(total_rx));
+        zx_human_bytes(state->cur_tx, total_tx, sizeof(total_tx));
+
+        printf("\n----------------------------------------\n");
+        printf("Interface: %s\n", state->iface);
+        printf("Download:   %s\n", down);
+        printf("Upload:     %s\n", up);
+        printf("RX Total:   %s\n", total_rx);
+        printf("TX Total:   %s\n", total_tx);
+        printf("REALTIME TRAFFIC (last %d sec)\n", ZXMON_HISTORY);
+        printf("----------------------------------------\n");
+        render_graph(state);
+    }
+
+    printf("\nLegend: * RX   + TX   # both\n");
+    printf("Press Ctrl+C to exit\n");
+    fflush(stdout);
+}
