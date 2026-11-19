@@ -17,6 +17,7 @@ static void usage(FILE *fp)
             "Usage:\n"
             "  zxnetmon [-n SECONDS]\n"
             "  zxnetmon -i IFACE [-n SECONDS]\n"
+            "  zxnetmon --list [-i IFACE|all]\n"
             "\n"
             "Options:\n"
             "  -i, --interface IFACE  monitor one interface; omit to "
@@ -24,13 +25,14 @@ static void usage(FILE *fp)
             "                         virtual interfaces (use \"all\" for "
             "all non-loopback)\n"
             "  -n, --interval SECONDS sample interval (default: 1)\n"
+            "  -l, --list, --dry-run  print selected interfaces and exit\n"
             "  -h, --help             show this help\n"
             "\n"
-            "Without -i, interfaces matching br*, vlan*, ppp*, wlan*, tun*,\n"
-            "tap*, bond*, docker*, virbr*, vmnet*, or without a sysfs "
-            "device\n"
-            "entry are shown.  If none match, all non-loopback interfaces "
-            "are used.\n"
+            "Auto mode uses only these name prefixes: br*, vlan*, ppp*,\n"
+            "wlan*, wlp*, tun*, tap*, bond*, docker*, virbr*, vmnet*.\n"
+            "lo and gre*, gretap*, sit*, ip6tnl*, idm* are always excluded.\n"
+            "If no whitelisted interface is present, all non-loopback\n"
+            "interfaces are used (the blacklist is still skipped).\n"
             "\n"
             "Reads counters from /proc/net/dev. Press Ctrl+C to exit.\n"
             "On this modem's SSH server, use Telnet for a full interactive "
@@ -45,6 +47,7 @@ int main(int argc, char **argv)
     unsigned long value;
     unsigned long long rx;
     unsigned long long tx;
+    int list_only = 0;
     int i;
 
     for (i = 1; i < argc; i++) {
@@ -68,6 +71,11 @@ int main(int argc, char **argv)
         }
         if (strncmp(arg, "--interface=", 12) == 0) {
             iface = arg + 12;
+            continue;
+        }
+        if (strcmp(arg, "-l") == 0 || strcmp(arg, "--list") == 0 ||
+            strcmp(arg, "--dry-run") == 0) {
+            list_only = 1;
             continue;
         }
         if (strcmp(arg, "-n") == 0 || strcmp(arg, "--interval") == 0) {
@@ -107,6 +115,10 @@ int main(int argc, char **argv)
             }
             return 1;
         }
+        if (list_only) {
+            printf("%s\n", iface);
+            return 0;
+        }
         return monitor_run(iface, interval);
     }
 
@@ -127,6 +139,15 @@ int main(int argc, char **argv)
             fprintf(stderr, "zxnetmon: no non-loopback interfaces found.\n");
             netdev_iflist_free(&list);
             return 1;
+        }
+
+        if (list_only) {
+            size_t n;
+
+            for (n = 0; n < list.count; n++)
+                printf("%s\n", list.names[n]);
+            netdev_iflist_free(&list);
+            return 0;
         }
 
         mode = all ? "all non-loopback" : "auto-detected";

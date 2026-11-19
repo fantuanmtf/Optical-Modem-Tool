@@ -24,6 +24,7 @@ timeout 2 ./bin/host/zxnetmon -n 1
 
 ```bash
 zxnetmon                 # 自动检测虚拟接口，每个接口一个面板
+zxnetmon --list          # 只打印自动检测结果，不监控
 zxnetmon -n 1            # 自动检测 + 1 秒采样
 zxnetmon -i br0          # 只监控指定接口
 zxnetmon -i br0 -n 1
@@ -31,16 +32,30 @@ zxnetmon -i all          # 所有非 lo 接口
 zxnetmon -h
 ```
 
-- 不写 `-i` 时自动检测接口：
-  - 永远排除 `lo`。
-  - 优先选择名称匹配 `br*`、`vlan*`、`ppp*`、`wlan*`、`tun*`、`tap*`、
-    `bond*`、`docker*`、`virbr*`、`vmnet*` 的接口，或没有
-    `/sys/class/net/<if>/device` 的接口。
-  - 没有匹配到虚拟接口时，回退到所有非 `lo` 接口。
+- 不写 `-i` 时只按名称白名单自动检测：
+  - 永远排除 `lo`，并显式跳过 `gre*`、`gretap*`、`sit*`、`ip6tnl*`、`idm*`。
+  - 只选择名称匹配 `br*`、`vlan*`、`ppp*`、`wlan*`、`wlp*`、`tun*`、`tap*`、
+    `bond*`、`docker*`、`virbr*`、`vmnet*` 的接口。
+  - 不再使用 `/sys/class/net/<if>/device` 作为判断条件。
+  - 没有匹配到白名单接口时，回退到所有非 `lo` 接口（仍跳过上面的黑名单）。
   - 没有任何可用接口时打印错误并退出。
 - `-i / --interface`：显式指定时保持单接口模式；`all` 表示所有非 `lo` 接口。
 - `-n / --interval`：刷新间隔秒数，默认 `1`，范围 1–86400。
+- `-l / --list / --dry-run`：只打印选中的接口名并退出，不进入监控；可配合
+  `-i IFACE` 或 `-i all` 使用。
 - `Ctrl+C` 退出并恢复光标。
+
+在这类光猫上，自动模式通常只选中 `br0` 和 `ppp0`；在桌面 Linux 上通常是
+`wlan0` 或 `wlp*`。可以用下面的命令核对：
+
+```bash
+zxnetmon --list
+```
+
+```text
+br0
+ppp0
+```
 
 ## 显示
 

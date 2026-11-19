@@ -154,6 +154,15 @@ if has_tool zxnetmon && [ -x "$BIN/zxnetmon" ]; then
         *"Press Ctrl+C"*) pass "zxnetmon header" ;;
         *) fail "zxnetmon header" ;;
     esac
+
+    if OUT=$("$BIN/zxnetmon" -i lo --list 2>&1); then
+        case "$OUT" in
+            lo) pass "zxnetmon list mode" ;;
+            *) fail "zxnetmon list mode output" ;;
+        esac
+    else
+        fail "zxnetmon list mode"
+    fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then
