@@ -1,93 +1,130 @@
 # Optical-Modem-Tool
 
-给已取得 root 的 ARM 光猫用的 **纯 Shell 小工具集**，面向 BusyBox / ZXIC Linux 4.1.25+ 这类环境。没有 C 代码、没有预编译二进制、不依赖包管理器。
+面向已 root 的 ARM Linux 光猫 / 路由器的**纯 shell 工具集**。  
+源码全部在 `src/`；`bin/` 只用于本地生成发布包，**不进入 git**。旧仓库 [`ung220z-tool`](https://github.com/fantuanmtf/ung220z-tool) 只负责提权和获取 root/SSH，不包含这些工具。
 
-> 仅用于你自己的设备，或已获得明确授权的设备。root 权限意味着可以改坏系统，请先备份。
+> 仅用于你自己的设备或已授权的设备。不要把这些工具、SSH 或管理端口暴露到公网。
 
-## 先取得 Root
+## 先获取 Root
 
-这个仓库**不负责提权**。请先用另一个 fork 取得光猫 root / SSH：
+本仓库不包含提权代码。先在旧仓库获取 root 和 SSH：
 
 - 仓库：<https://github.com/fantuanmtf/ung220z-tool>
-- 运行其中的 `ung220z.py`，它会提取 Web、Telnet、PPPoE、WiFi、root 等凭据，并可安装仅密钥、仅 LAN 的 SSH。
-- 该固件的 SSH **PTY 交互终端不兼容**；命令请用 `ssh -T`，完整终端用 Telnet（登录后 `su`）。
-- 拿到 root 后，把本仓库传到光猫，例如：
-
-```bash
-scp -r Optical-Modem-Tool root@192.168.1.1:/usr/data/
-ssh -T root@192.168.1.1 'cd /usr/data/Optical-Modem-Tool && sh install.sh'
-```
+- 运行 `ung220z.py`：提取 Web/Telnet/PPPoE/WiFi/root 凭据，并安装仅密钥的 LAN SSH。
+- 该固件的交互式 SSH PTY 不完整：SSH 用 `ssh -T`，完整终端用 Telnet。
+- 拿到 root 后，再回到本仓库安装工具。
 
 ## 项目
 
-| 目录 | 命令 | 作用 |
-| --- | --- | --- |
-| `zxtools/` | `zxtools` | 工具箱菜单，也可直接调用子命令 |
-| `router-check/` | `router-check` | 系统、内存、存储、网络、进程自检报告 |
-| `fileinfo/` | `fileinfo` | 文件类型、权限、大小、owner/group、mtime |
-| `zxnetmon/` | `zxnetmon` | Nyx 风格的实时 RX/TX 流量面板 |
+| 项目 | 说明 |
+|---|---|
+| `zxtools` | 统一菜单入口，也可直接调用子工具 |
+| `router-check` | 系统、CPU、内存、存储、网卡、路由、端口、进程、无线信息自检 |
+| `fileinfo` | 文件类型、权限、大小、owner/group、mtime、symlink 目标 |
+| `zxnetmon` | `ZX NETMONITOR` 实时 RX/TX 速率、累计流量和 ASCII 图 |
 
-全部是 POSIX `sh`，可在 BusyBox ash 下运行。
+每个项目的源码和说明在 `src/<项目>/`。
 
 ## 安装
 
-在光猫 root shell 中执行：
+### 光猫 / 已 root 的 BusyBox 设备
 
 ```bash
-cd /usr/data/Optical-Modem-Tool
-sh install.sh
+tar xzf optical-modem-tool-*.tar.gz
+cd Optical-Modem-Tool
+sh install.sh --modem
 ```
 
-默认安装到 `/usr/data/zxtools`，并在 `/usr/bin` 下建立 `zxtools`、`router-check`、`fileinfo`、`zxnetmon` 链接。若 `/usr/bin` 不可写，则链接放到 `/usr/data/zxtools/bin`。
+默认安装到 `/usr/data/zxtools`，并在 `/usr/bin` 创建 `zxtools`、`router-check`、`fileinfo`、`zxnetmon` 链接。
 
-重启后 `/usr/bin` 的链接可能丢失。要持久化：
+可选开机重建链接：
 
 ```bash
-sh install.sh --boot
+sh install.sh --modem --boot
 ```
 
-`--boot` 会在现有 `/usr/data/burntest/burntest.sh` 末尾追加一个带 `# ZXTOOLS_BOOT` 标记的启动块，并先备份为 `burntest.sh.zxtools.bak`。不会覆盖 SSH 的启动内容。
+`--boot` 会往 `/usr/data/burntest/burntest.sh` 追加一段 `# ZXTOOLS_BOOT`，并先备份为 `.zxtools.bak`。该钩子原本由 `ung220z-tool` 创建；如果你卸载 SSH 时删除了它，需要重新安装或手动恢复。
+
+### 普通 Linux（不需要 root）
+
+```bash
+sh install.sh --local
+```
+
+安装到 `${XDG_DATA_HOME:-$HOME/.local/share}/zxtools`，链接到 `~/.local/bin`。
+
+### 自定义目录
+
+```bash
+sh install.sh --prefix /opt/zxtools --bin-dir /usr/local/bin
+sh install.sh --prefix /opt/zxtools --no-links
+```
+
+### Makefile
+
+```bash
+make check                         # sh -n + tests/smoke.sh
+make package                       # bin/optical-modem-tool-<version>.tar.gz
+make install PREFIX=/usr/data/zxtools BINDIR=/usr/bin
+make uninstall
+make clean                         # 删除 bin/ 发布包
+```
+
+`bin/` 已被 `.gitignore` 忽略；发布包请单独上传到 release，不要提交进仓库。
 
 ## 使用
 
 ```bash
-zxtools                 # 菜单
-zxtools router-check    # 直接调用
-router-check            # 打印自检报告
+zxtools                 # 交互菜单（需要 TTY，建议 Telnet）
+zxtools router-check    # 非交互直调
+zxtools fileinfo /usr/data/hello
+zxtools netmon
+
+router-check
 router-check --save     # 保存到 /usr/data/zxtools/reports/
-router-check -o /tmp/router-check.txt
 fileinfo /usr/data/hello
-zxnetmon                # 默认 br0，1 秒刷新
 zxnetmon -i br0 -n 1
 ```
 
-注意：
+- `zxtools` 菜单需要 TTY；通过 `ssh -T` 运行时请用 `zxtools router-check` 这种直调方式。
+- `zxnetmon` 需要终端显示 ANSI 图；建议用 Telnet，`Ctrl+C` 退出。
+- `router-check` 和 `fileinfo` 可以在 `ssh -T` 下直接运行。
 
-- `zxtools` 菜单需要 TTY；通过 `ssh -T` 没有 TTY 时会打印用法，请直接用子命令。
-- `zxnetmon` 需要终端看实时画面；Telnet 最稳。SSH 下可以用 `ssh -T ... 'timeout 5 zxnetmon'` 做一次性观察。
-- 所有工具默认只读，不监听端口，不改防火墙。
+## 目录结构
 
-## 兼容性与限制
+```text
+Optical-Modem-Tool/
+├── src/
+│   ├── zxtools/zxtools
+│   ├── router-check/router-check
+│   ├── fileinfo/fileinfo
+│   └── zxnetmon/zxnetmon
+├── tests/smoke.sh
+├── Makefile
+├── install.sh
+├── uninstall.sh
+├── boot-links.sh
+├── bin/                 # 发布包，git 忽略
+└── README.md
+```
 
-- 目标：ARMv7 光猫，BusyBox，`/proc/net/dev`、`/proc/meminfo`、`ifconfig`/`ip`、`netstat`、`df`、`ps` 等常见命令。
-- 没有历史数据库；`zxnetmon` 只保留最近 30 个采样点。
-- 设备内存/存储有限，不建议在光猫上跑重负载服务。
-- 固件升级或恢复出厂可能清空 `/usr/data`，工具和启动块都需要重装。
+## 限制
+
+- 全部为 POSIX shell / BusyBox 兼容脚本，无 C、无预编译二进制。
+- 光猫内存/存储有限；`zxnetmon` 只做 1 秒采样，适合轻量监控。
+- `/usr/data` 是持久分区，但固件升级/恢复出厂可能清空；升级后重新安装。
+- 交互式 SSH PTY 在这类 ZTE 固件上不可靠；完整终端用 Telnet。
+- 只读诊断优先；改配置前先备份。
 
 ## 卸载
 
 ```bash
-cd /usr/data/Optical-Modem-Tool
-sh uninstall.sh
+sh uninstall.sh --modem
+sh uninstall.sh --local
+sh uninstall.sh --prefix /opt/zxtools --bin-dir /usr/local/bin
 ```
 
-它会删除本工具创建的链接和 `/usr/data/zxtools`，并尝试移除启动块（保留 `.zxtools.uninstall.bak` 备份）。
-
-## 安全
-
-- 这是 root 级工具；不要放在公网，不要把 SSH/Telnet 端口映射到 WAN。
-- 不要把我给你的示例凭据写进仓库或脚本。
-- 建议只在可信 LAN 使用，并保留光猫原厂配置备份。
+默认会移除本工具创建的链接、安装目录和 `# ZXTOOLS_BOOT` 启动块；保留启动块可加 `--keep-boot`。
 
 ## License
 

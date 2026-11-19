@@ -1,0 +1,5 @@
+# Release artifacts: publish these separately, never commit them.
+bin/
+*.tar.gz
+*.log
+*.tmp

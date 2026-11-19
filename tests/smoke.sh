@@ -1,101 +1,103 @@
 #!/bin/sh
-# Smoke tests for the shell-only Optical-Modem-Tool suite.
-# Run from anywhere: sh tests/smoke.sh
+# Host-side smoke tests for the shell toolkit.
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TMP="/tmp/zxtools-smoke.$$"
-FAILED=0
+SRC="$ROOT/src"
+TMP="${TMPDIR:-/tmp}/zxtools-smoke.$$"
+FAIL=0
 
 cleanup() {
     rm -f "$TMP"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT INT TERM
 
 pass() {
-    printf 'PASS  %s\n' "$1"
+    printf 'PASS %s\n' "$1"
 }
 
 fail() {
-    printf 'FAIL  %s\n' "$1"
-    FAILED=1
+    printf 'FAIL %s\n' "$1"
+    FAIL=$((FAIL + 1))
 }
 
 check_syntax() {
-    f=$1
-    if sh -n "$ROOT/$f"; then
-        pass "syntax $f"
+    if sh -n "$1"; then
+        pass "syntax $1"
     else
-        fail "syntax $f"
+        fail "syntax $1"
     fi
 }
 
-check_syntax zxtools/zxtools
-check_syntax router-check/router-check
-check_syntax fileinfo/fileinfo
-check_syntax zxnetmon/zxnetmon
-check_syntax install.sh
-check_syntax uninstall.sh
-check_syntax boot-links.sh
+for f in \
+    "$SRC/zxtools/zxtools" \
+    "$SRC/router-check/router-check" \
+    "$SRC/fileinfo/fileinfo" \
+    "$SRC/zxnetmon/zxnetmon" \
+    "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/boot-links.sh" \
+    "$ROOT/tests/smoke.sh"; do
+    check_syntax "$f"
+done
 
-if "$ROOT/fileinfo/fileinfo" "$ROOT/README.md" >"$TMP" 2>&1; then
-    pass "fileinfo runs"
+if OUT=$("$SRC/fileinfo/fileinfo" "$ROOT/README.md" 2>&1); then
+    case "$OUT" in
+        *"Path:"*"$ROOT/README.md"*) pass "fileinfo runs" ;;
+        *) fail "fileinfo path output" ;;
+    esac
+    case "$OUT" in
+        *"regular file"*) pass "fileinfo type" ;;
+        *) fail "fileinfo type output" ;;
+    esac
+    case "$OUT" in
+        *"Size:"*) pass "fileinfo size" ;;
+        *) fail "fileinfo size output" ;;
+    esac
+    MOD=$(printf '%s\n' "$OUT" | awk -F': ' '/^Modified:/{print $2}')
+    case "$MOD" in
+        *README.md*) fail "fileinfo mtime includes filename" ;;
+        *) pass "fileinfo mtime excludes filename" ;;
+    esac
 else
     fail "fileinfo runs"
 fi
-if grep -q '^Path:' "$TMP" && grep -q '^Size:' "$TMP" && grep -q '^Modified:' "$TMP"; then
-    pass "fileinfo fields"
-else
-    fail "fileinfo fields"
-fi
-if grep '^Modified:' "$TMP" | grep -q 'README.md'; then
-    fail "fileinfo mtime excludes filename"
-else
-    pass "fileinfo mtime excludes filename"
-fi
 
-if "$ROOT/router-check/router-check" -o "$TMP" >/dev/null 2>&1; then
-    pass "router-check runs"
+if "$SRC/router-check/router-check" -o "$TMP" >/dev/null 2>&1; then
+    for key in System Memory Storage; do
+        if grep -q "$key" "$TMP"; then
+            pass "router-check $key"
+        else
+            fail "router-check $key"
+        fi
+    done
 else
     fail "router-check runs"
 fi
-if grep -q 'System' "$TMP" && grep -q 'Memory' "$TMP" && grep -q 'Storage' "$TMP"; then
-    pass "router-check sections"
-else
-    fail "router-check sections"
-fi
 
-if "$ROOT/zxtools/zxtools" help >"$TMP" 2>&1; then
-    pass "zxtools help"
+if OUT=$("$SRC/zxtools/zxtools" help 2>&1); then
+    case "$OUT" in
+        *Usage:*) pass "zxtools help" ;;
+        *) fail "zxtools help output" ;;
+    esac
 else
     fail "zxtools help"
 fi
-if grep -q 'Usage' "$TMP"; then
-    pass "zxtools usage text"
-else
-    fail "zxtools usage text"
-fi
 
 if command -v timeout >/dev/null 2>&1; then
-    timeout 2 "$ROOT/zxnetmon/zxnetmon" -i lo -n 1 >"$TMP" 2>&1
-    rc=$?
-    if [ "$rc" -eq 124 ] || [ "$rc" -eq 0 ]; then
-        pass "zxnetmon runs"
-    else
-        fail "zxnetmon runs (rc=$rc)"
-    fi
-    if grep -q 'ZX NETMONITOR' "$TMP"; then
-        pass "zxnetmon header"
-    else
-        fail "zxnetmon header"
-    fi
+    OUT=$(timeout 2 "$SRC/zxnetmon/zxnetmon" -i lo -n 1 2>&1 || true)
 else
-    printf 'SKIP  zxnetmon (timeout not found)\n'
+    OUT=$("$SRC/zxnetmon/zxnetmon" -i lo -n 1 2>&1 & ZPID=$!; sleep 2; kill "$ZPID" 2>/dev/null; wait "$ZPID" 2>/dev/null || true)
 fi
+case "$OUT" in
+    *"ZX NETMONITOR"*) pass "zxnetmon runs" ;;
+    *) fail "zxnetmon runs" ;;
+esac
+case "$OUT" in
+    *"Press Ctrl+C"*) pass "zxnetmon header" ;;
+    *) fail "zxnetmon header" ;;
+esac
 
-if [ "$FAILED" -eq 0 ]; then
-    printf '\nAll smoke tests passed.\n'
-    exit 0
+if [ "$FAIL" -ne 0 ]; then
+    printf '%s smoke test(s) failed.\n' "$FAIL"
+    exit 1
 fi
-printf '\nSome smoke tests failed.\n'
-exit 1
+printf 'All smoke tests passed.\n'
